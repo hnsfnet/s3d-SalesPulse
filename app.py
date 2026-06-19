@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 import charts
+import data_utils
 
 st.set_page_config(page_title="电商销售数据分析仪表盘", page_icon="📊", layout="wide")
 
@@ -19,29 +20,12 @@ def load_data(path):
 
 @st.cache_data
 def apply_filters(df, date_range, categories, region):
-    start, end = date_range
-    mask = (df["订单日期"].dt.date >= start) & (df["订单日期"].dt.date <= end)
-    if categories:
-        mask &= df["类目"].isin(categories)
-    if region != "全部":
-        mask &= df["地区"] == region
-    return df.loc[mask].reset_index(drop=True)
+    return data_utils.filter_orders(df, date_range, categories, region)
 
 
 @st.cache_data
 def compute_kpis(df):
-    total_sales = df["销售额"].sum()
-    total_orders = df["订单编号"].nunique()
-    total_customers = df["用户ID"].nunique()
-    avg_customer_value = total_sales / total_customers if total_customers > 0 else 0
-    sku_count = df["商品名称"].nunique()
-    return {
-        "total_sales": float(total_sales),
-        "total_orders": int(total_orders),
-        "total_customers": int(total_customers),
-        "avg_customer_value": float(avg_customer_value),
-        "sku_count": int(sku_count),
-    }
+    return data_utils.compute_kpis(df)
 
 
 df_raw = load_data(DATA_FILE)

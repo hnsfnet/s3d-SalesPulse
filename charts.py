@@ -2,6 +2,8 @@ import pandas as pd
 import plotly.express as px
 from plotly.graph_objects import Figure
 
+import data_utils
+
 _BASE_LAYOUT = dict(
     height=440,
     margin=dict(l=10, r=10, t=20, b=10),
@@ -10,20 +12,7 @@ _BASE_LAYOUT = dict(
 
 
 def make_daily_sales_line(df: pd.DataFrame, line_color: str = "#2563eb") -> Figure:
-    full_range = pd.date_range(
-        df["订单日期"].min().normalize(),
-        df["订单日期"].max().normalize(),
-        freq="D",
-    )
-    daily = (
-        df.groupby(df["订单日期"].dt.normalize())["销售额"]
-        .sum()
-        .reindex(full_range, fill_value=0)
-        .reset_index()
-    )
-    daily.columns = ["日期", "销售额"]
-    daily["日期"] = daily["日期"].dt.strftime("%Y-%m-%d")
-
+    daily = data_utils.aggregate_daily_sales(df)
     fig = px.line(daily, x="日期", y="销售额", markers=True, template="plotly_white")
     fig.update_traces(
         line_color=line_color,
@@ -39,12 +28,7 @@ def make_daily_sales_line(df: pd.DataFrame, line_color: str = "#2563eb") -> Figu
 
 
 def make_category_sales_pie(df: pd.DataFrame) -> Figure:
-    cat_sales = (
-        df.groupby("类目")["销售额"]
-        .sum()
-        .reset_index()
-        .sort_values("销售额", ascending=False)
-    )
+    cat_sales = data_utils.aggregate_category_sales(df)
     fig = px.pie(
         cat_sales,
         names="类目",
@@ -62,12 +46,7 @@ def make_category_sales_pie(df: pd.DataFrame) -> Figure:
 
 
 def make_category_sales_bar(df: pd.DataFrame) -> Figure:
-    cat_sales = (
-        df.groupby("类目")["销售额"]
-        .sum()
-        .reset_index()
-        .sort_values("销售额", ascending=False)
-    )
+    cat_sales = data_utils.aggregate_category_sales(df)
     fig = px.bar(
         cat_sales,
         x="类目",
@@ -90,14 +69,9 @@ def make_category_sales_bar(df: pd.DataFrame) -> Figure:
 
 
 def make_category_region_stacked_bar(df: pd.DataFrame) -> Figure:
-    cat_sales = (
-        df.groupby("类目")["销售额"]
-        .sum()
-        .reset_index()
-        .sort_values("销售额", ascending=False)
-    )
+    cat_sales = data_utils.aggregate_category_sales(df)
     cat_order = cat_sales["类目"].tolist()
-    cat_region_sales = df.groupby(["类目", "地区"])["销售额"].sum().reset_index()
+    cat_region_sales = data_utils.aggregate_category_region_sales(df)
     fig = px.bar(
         cat_region_sales,
         x="类目",
