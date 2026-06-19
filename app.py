@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pandas as pd
-import plotly.express as px
 import streamlit as st
+
+import charts
 
 st.set_page_config(page_title="电商销售数据分析仪表盘", page_icon="📊", layout="wide")
 
@@ -16,6 +17,33 @@ def load_data(path):
     return df
 
 
+@st.cache_data
+def apply_filters(df, date_range, categories, region):
+    start, end = date_range
+    mask = (df["订单日期"].dt.date >= start) & (df["订单日期"].dt.date <= end)
+    if categories:
+        mask &= df["类目"].isin(categories)
+    if region != "全部":
+        mask &= df["地区"] == region
+    return df.loc[mask].reset_index(drop=True)
+
+
+@st.cache_data
+def compute_kpis(df):
+    total_sales = df["销售额"].sum()
+    total_orders = df["订单编号"].nunique()
+    total_customers = df["用户ID"].nunique()
+    avg_customer_value = total_sales / total_customers if total_customers > 0 else 0
+    sku_count = df["商品名称"].nunique()
+    return {
+        "total_sales": float(total_sales),
+        "total_orders": int(total_orders),
+        "total_customers": int(total_customers),
+        "avg_customer_value": float(avg_customer_value),
+        "sku_count": int(sku_count),
+    }
+
+
 df_raw = load_data(DATA_FILE)
 
 
@@ -23,7 +51,6 @@ def init_session_state():
     min_date = df_raw["订单日期"].min().date()
     max_date = df_raw["订单日期"].max().date()
     all_cats = sorted(df_raw["类目"].unique().tolist())
-    all_regions = ["全部"] + sorted(df_raw["地区"].unique().tolist())
 
     defaults = {
         "page": "📊 数据概览",
@@ -38,6 +65,8 @@ def init_session_state():
 
 init_session_state()
 
+all_categories = sorted(df_raw["类目"].unique().tolist())
+all_regions = ["全部"] + sorted(df_raw["地区"].unique().tolist())
 
 with st.sidebar:
     st.markdown("## 📊 电商销售分析")
@@ -62,26 +91,16 @@ with st.sidebar:
 
     st.multiselect(
         "类目（可多选）",
-        options=sorted(df_raw["类目"].unique().tolist()),
+        options=all_categories,
         key="categories",
         placeholder="请选择类目",
     )
 
     st.selectbox(
         "地区",
-        ["全部"] + sorted(df_raw["地区"].unique().tolist()),
+        all_regions,
         key="region",
     )
-
-
-def apply_filters(df):
-    start, end = st.session_state["date_range"]
-    mask = (df["订单日期"].dt.date >= start) & (df["订单日期"].dt.date <= end)
-    if st.session_state["categories"]:
-        mask &= df["类目"].isin(st.session_state["categories"])
-    if st.session_state["region"] != "全部":
-        mask &= df["地区"] == st.session_state["region"]
-    return df.loc[mask].reset_index(drop=True)
 
 
 def render_overview(data):
@@ -95,83 +114,35 @@ def render_overview(data):
     )
     st.divider()
 
-    total_sales = data["销售额"].sum()
-    total_orders = data["订单编号"].nunique()
-    total_customers = data["用户ID"].nunique()
-    avg_customer_value = total_sales / total_customers if total_customers > 0 else 0
-    sku_count = data["商品名称"].nunique()
+    kpis = compute_kpis(data)
 
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        st.metric("总销售额", f"¥{total_sales:,.0f}", key="kpi_sales")
+        st.metric("总销售额", f"¥{kpis['total_sales']:,.0f}", key="kpi_sales")
     with k2:
-        st.metric("总订单数", f"{total_orders:,}", key="kpi_orders")
+        st.metric("总订单数", f"{kpis['total_orders']:,}", key="kpi_orders")
     with k3:
-        st.metric("客单价（按用户）", f"¥{avg_customer_value:,.0f}", key="kpi_aov")
+        st.metric("客单价（按用户）", f"¥{kpis['avg_customer_value']:,.0f}", key="kpi_aov")
     with k4:
-        st.metric("有销量商品数", f"{sku_count:,}", key="kpi_sku")
+        st.metric("有销量商品数", f"{kpis['sku_count']:,}", key="kpi_sku")
 
     st.divider()
 
     st.subheader("📈 每日销售额趋势")
-    full_range = pd.date_range(
-        data["订单日期"].min().normalize(),
-        data["订单日期"].max().normalize(),
-        freq="D",
+    st.plotly_chart(
+        charts.make_daily_sales_line(data),
+        use_container_width=True,
+        key="overview_line_chart",
     )
-    daily = (
-        data.groupby(data["订单日期"].dt.normalize())["销售额"]
-        .sum()
-        .reindex(full_range, fill_value=0)
-        .reset_index()
-    )
-    daily.columns = ["日期", "销售额"]
-    daily["日期"] = daily["日期"].dt.strftime("%Y-%m-%d")
-
-    fig_line = px.line(
-        daily,
-        x="日期",
-        y="销售额",
-        markers=True,
-        template="plotly_white",
-    )
-    fig_line.update_traces(
-        line_color="#2563eb",
-        hovertemplate="日期： %{x}<br>销售额： ¥%{y:,.0f}<extra></extra>",
-    )
-    fig_line.update_layout(
-        xaxis_title="日期",
-        yaxis_title="销售额（元）",
-        hovermode="x unified",
-        height=440,
-        margin=dict(l=10, r=10, t=20, b=10),
-    )
-    st.plotly_chart(fig_line, use_container_width=True, key="overview_line_chart")
 
     st.divider()
 
     st.subheader("🧩 各类目销售额占比")
-    cat_sales = (
-        data.groupby("类目")["销售额"].sum().reset_index().sort_values("销售额", ascending=False)
+    st.plotly_chart(
+        charts.make_category_sales_pie(data),
+        use_container_width=True,
+        key="overview_pie_chart",
     )
-    fig_pie = px.pie(
-        cat_sales,
-        names="类目",
-        values="销售额",
-        hole=0.4,
-        template="plotly_white",
-    )
-    fig_pie.update_traces(
-        textposition="inside",
-        textinfo="label+percent",
-        hovertemplate="类目： %{label}<br>销售额： ¥%{value:,.0f}<br>占比： %{percent}<extra></extra>",
-    )
-    fig_pie.update_layout(
-        height=440,
-        legend_title="类目",
-        margin=dict(l=10, r=10, t=20, b=10),
-    )
-    st.plotly_chart(fig_pie, use_container_width=True, key="overview_pie_chart")
 
 
 def render_category_comparison(data):
@@ -186,60 +157,28 @@ def render_category_comparison(data):
     st.divider()
 
     st.subheader("🏷️ 各类目销售额对比")
-    cat_sales = (
-        data.groupby("类目")["销售额"].sum().reset_index().sort_values("销售额", ascending=False)
+    st.plotly_chart(
+        charts.make_category_sales_bar(data),
+        use_container_width=True,
+        key="cat_bar_chart",
     )
-    fig_bar = px.bar(
-        cat_sales,
-        x="类目",
-        y="销售额",
-        text_auto=".2s",
-        template="plotly_white",
-        color="销售额",
-        color_continuous_scale="Blues",
-    )
-    fig_bar.update_traces(
-        hovertemplate="类目： %{x}<br>销售额： ¥%{y:,.0f}<extra></extra>",
-    )
-    fig_bar.update_layout(
-        xaxis_title="类目",
-        yaxis_title="销售额（元）",
-        height=440,
-        coloraxis_showscale=False,
-        margin=dict(l=10, r=10, t=20, b=10),
-    )
-    st.plotly_chart(fig_bar, use_container_width=True, key="cat_bar_chart")
 
     st.divider()
 
     st.subheader("🌍 各地区类目销售分布（堆叠）")
-    cat_region_sales = (
-        data.groupby(["类目", "地区"])["销售额"].sum().reset_index()
+    st.plotly_chart(
+        charts.make_category_region_stacked_bar(data),
+        use_container_width=True,
+        key="cat_stacked_chart",
     )
-    cat_order = cat_sales["类目"].tolist()
-    fig_stacked = px.bar(
-        cat_region_sales,
-        x="类目",
-        y="销售额",
-        color="地区",
-        template="plotly_white",
-        category_orders={"类目": cat_order},
-    )
-    fig_stacked.update_traces(
-        hovertemplate="类目： %{x}<br>地区： %{color}<br>销售额： ¥%{y:,.0f}<extra></extra>",
-    )
-    fig_stacked.update_layout(
-        xaxis_title="类目",
-        yaxis_title="销售额（元）",
-        barmode="stack",
-        height=440,
-        legend_title="地区",
-        margin=dict(l=10, r=10, t=20, b=10),
-    )
-    st.plotly_chart(fig_stacked, use_container_width=True, key="cat_stacked_chart")
 
 
-filtered_df = apply_filters(df_raw)
+filtered_df = apply_filters(
+    df_raw,
+    st.session_state["date_range"],
+    st.session_state["categories"],
+    st.session_state["region"],
+)
 
 if st.session_state["page"] == "📊 数据概览":
     render_overview(filtered_df)
